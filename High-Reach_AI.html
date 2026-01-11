@@ -3,20 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>High-Reach AI Pro (Rear Cam)</title>
+    <title>High-Reach AI Pro (Custom Height)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
     <style>
         body { margin: 0; background: #121212; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
         .header { background: rgba(0,0,0,0.9); width: 100%; padding: 10px; text-align: center; border-bottom: 2px solid #00ffcc; position: fixed; top: 0; z-index: 100; }
-        #status-msg { color: #ffcc00; font-size: 0.9rem; margin-bottom: 5px; }
-        .stats { display: flex; justify-content: center; gap: 30px; }
-        .value { color: #00ffcc; font-size: 1.8rem; font-weight: bold; }
+        #status-msg { color: #ffcc00; font-size: 0.8rem; margin-bottom: 5px; }
+        .setup-row { margin-bottom: 8px; font-size: 0.9rem; }
+        input[type="number"] { width: 60px; padding: 5px; border-radius: 5px; border: none; text-align: center; font-weight: bold; }
+        .stats { display: flex; justify-content: center; gap: 20px; }
+        .value { color: #00ffcc; font-size: 1.5rem; font-weight: bold; }
         canvas { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
         .controls { position: fixed; bottom: 20px; display: flex; gap: 10px; z-index: 100; }
-        button { padding: 12px 20px; border-radius: 25px; border: none; font-weight: bold; background: #444; color: white; }
-        #download-link { display: none; background: #2ed573; color: white; text-decoration: none; padding: 12px 20px; border-radius: 25px; font-weight: bold; }
+        button { padding: 12px 18px; border-radius: 25px; border: none; font-weight: bold; background: #444; color: white; font-size: 0.8rem; }
+        #download-link { display: none; background: #2ed573; color: white; text-decoration: none; padding: 12px 18px; border-radius: 25px; font-weight: bold; font-size: 0.8rem; }
         video { display: none; }
     </style>
 </head>
@@ -24,6 +26,9 @@
 
 <div class="header">
     <div id="status-msg">STEP 1: 床をクリック</div>
+    <div class="setup-row">
+        ネットの高さ: <input type="number" id="net-height-input" value="243"> cm
+    </div>
     <div class="stats">
         <div>LIVE: <span id="current-h" class="value">0</span>cm</div>
         <div>BEST: <span id="max-h" class="value">0</span>cm</div>
@@ -46,10 +51,10 @@
     const statusMsg = document.getElementById('status-msg');
     const currentHDisplay = document.getElementById('current-h');
     const maxHDisplay = document.getElementById('max-h');
+    const netHeightInput = document.getElementById('net-height-input');
     const downloadLink = document.getElementById('download-link');
 
     let groundY = null, netY = null, pixelToCmRatio = 0, maxReach = 0;
-    const NET_HEIGHT_CM = 243; 
 
     function speak(text) {
         const uttr = new SpeechSynthesisUtterance(text);
@@ -60,8 +65,16 @@
     canvasElement.addEventListener('click', (e) => {
         const rect = canvasElement.getBoundingClientRect();
         const y = (e.clientY - rect.top) * (canvasElement.height / rect.height);
-        if (groundY === null) { groundY = y; statusMsg.innerText = "STEP 2: ネットの上端をクリック"; }
-        else if (netY === null) { netY = y; pixelToCmRatio = NET_HEIGHT_CM / Math.abs(groundY - netY); statusMsg.innerText = "READY!"; }
+        if (groundY === null) { 
+            groundY = y; 
+            statusMsg.innerText = "STEP 2: ネットの上端をクリック"; 
+        }
+        else if (netY === null) { 
+            netY = y; 
+            const netHeightCm = parseFloat(netHeightInput.value);
+            pixelToCmRatio = netHeightCm / Math.abs(groundY - netY); 
+            statusMsg.innerText = "READY!"; 
+        }
     });
 
     window.resetCalibration = () => { groundY = null; netY = null; pixelToCmRatio = 0; statusMsg.innerText = "STEP 1: 床をクリック"; };
@@ -74,14 +87,22 @@
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-        if (groundY !== null) { canvasCtx.strokeStyle = "red"; canvasCtx.strokeRect(0, groundY, canvasElement.width, 1); }
-        if (netY !== null) { canvasCtx.strokeStyle = "#00ffcc"; canvasCtx.strokeRect(0, netY, canvasElement.width, 1); }
+        if (groundY !== null) { 
+            canvasCtx.strokeStyle = "red"; 
+            canvasCtx.lineWidth = 3;
+            canvasCtx.beginPath(); canvasCtx.moveTo(0, groundY); canvasCtx.lineTo(canvasElement.width, groundY); canvasCtx.stroke();
+        }
+        if (netY !== null) { 
+            canvasCtx.strokeStyle = "#00ffcc"; 
+            canvasCtx.lineWidth = 3;
+            canvasCtx.beginPath(); canvasCtx.moveTo(0, netY); canvasCtx.lineTo(canvasElement.width, netY); canvasCtx.stroke();
+        }
 
         if (results.poseLandmarks && pixelToCmRatio > 0) {
             const handY = Math.min(results.poseLandmarks[15].y, results.poseLandmarks[16].y) * canvasElement.height;
             const currentHeight = Math.round((groundY - handY) * pixelToCmRatio);
             
-            if (currentHeight > 150) {
+            if (currentHeight > 100) {
                 currentHDisplay.innerText = currentHeight;
                 if (currentHeight > maxReach) {
                     maxReach = currentHeight;
@@ -98,10 +119,9 @@
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(onResults);
 
-    // 背面カメラ設定
     const camera = new Camera(videoElement, {
         onFrame: async () => { await pose.send({image: videoElement}); },
-        facingMode: 'environment', // これが背面カメラの指定
+        facingMode: 'environment',
         width: 1280,
         height: 720
     });
