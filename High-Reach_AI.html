@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>High-Reach AI Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+    <style>
+        body { margin: 0; background: #121212; color: white; font-family: 'Arial', sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+        .header { background: rgba(0,0,0,0.9); width: 100%; padding: 10px; text-align: center; border-bottom: 2px solid #00ffcc; }
+        #status-msg { color: #ffcc00; font-size: 0.9rem; margin-bottom: 5px; }
+        .stats { display: flex; justify-content: center; gap: 30px; }
+        .stat-item { text-align: center; }
+        .label { font-size: 0.7rem; color: #aaa; display: block; }
+        .value { color: #00ffcc; font-size: 1.8rem; font-weight: bold; }
+        
+        canvas { width: 100vw; height: auto; max-width: 800px; background: #000; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        .controls { position: fixed; bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        button { padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        #reset-btn { background: #ff4757; color: white; }
+        #calib-btn { background: #57606f; color: white; }
+        #download-link { display: none; background: #2ed573; color: white; text-decoration: none; padding: 10px 20px; border-radius: 20px; font-weight: bold; }
+        video { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div id="status-msg">STEP 1: 床（サイドライン上）をクリック</div>
+    <div class="stats">
+        <div class="stat-item"><span class="label">LIVE</span><span id="current-h" class="value">0</span><small>cm</small></div>
+        <div class="stat-item"><span class="label">BEST</span><span id="max-h" class="value">0</span><small>cm</small></div>
+    </div>
+</div>
+
+<canvas id="output_canvas"></canvas>
+<video id="input_video"></video>
+
+<div class="controls">
+    <button id="calib-btn" onclick="resetCalibration()">設定リセット</button>
+    <button id="reset-btn" onclick="resetMax()">記録リセット</button>
+    <a id="download-link">最高打点の動画を保存</a>
+</div>
+
+<script type="module">
+    const videoElement = document.getElementById('input_video');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    const statusMsg = document.getElementById('status-msg');
+    const currentHDisplay = document.getElementById('current-h');
+    const maxHDisplay = document.getElementById('max-h');
+    const downloadLink = document.getElementById('download-link');
+
+    let groundY = null, netY = null, pixelToCmRatio = 0, maxReach = 0;
+    const NET_HEIGHT_CM = 243; 
+
+    // --- 動画保存用変数 ---
+    let mediaRecorder;
+    let recordedChunks = [];
+    const stream = canvasElement.captureStream(30); // キャプチャ開始
+
+    // --- 音声読み上げ関数 ---
+    function speak(text) {
+        const uttr = new SpeechSynthesisUtterance(text);
+        uttr.lang = 'ja-JP';
+        uttr.rate = 1.2;
+        window.speechSynthesis.speak(uttr);
+    }
+
+    // キャンバス設定
+    canvasElement.width = 640;
+    canvasElement.height = 480;
+
+    canvasElement.addEventListener('click', (e) => {
+        const rect = canvasElement.getBoundingClientRect();
+        const scaleX = canvasElement.width / rect.width;
+        const scaleY = canvasElement.height / rect.height;
+        const y = (e.clientY - rect.top) * scaleY;
+
+        if (groundY === null) {
+            groundY = y;
+            statusMsg.innerText = "STEP 2: ネットの上端をクリック";
+        } else if (netY === null) {
+            netY = y;
+            pixelToCmRatio = NET_HEIGHT_CM / Math.abs(groundY - netY);
+            statusMsg.innerText = "READY! 録画中...";
+            startRecording(); // 録画開始
+        }
+    });
+
+    window.resetCalibration = () => {
+        groundY = null; netY = null; pixelToCmRatio = 0;
+        statusMsg.innerText = "STEP 1: 床をクリック";
+    };
+
+    window.resetMax = () => {
+        maxReach = 0;
+        maxHDisplay.innerText = "0";
+        downloadLink.style.display = "none";
+    };
+
+    // 録画機能
+    function startRecording() {
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+            downloadLink.href = url;
+            downloadLink.download = `best_spike_${maxReach}cm.webm`;
+            downloadLink.style.display = "block";
+        };
+        mediaRecorder.start();
+    }
+
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+        if (groundY !== null) {
+            canvasCtx.strokeStyle = "red";
+            canvasCtx.beginPath(); canvasCtx.moveTo(0, groundY); canvasCtx.lineTo(canvasElement.width, groundY); canvasCtx.stroke();
+        }
+        if (netY !== null) {
+            canvasCtx.strokeStyle = "#00ffcc";
+            canvasCtx.beginPath(); canvasCtx.moveTo(0, netY); canvasCtx.lineTo(canvasElement.width, netY); canvasCtx.stroke();
+        }
+
+        if (results.poseLandmarks && pixelToCmRatio > 0) {
+            const leftHandY = results.poseLandmarks[15].y * canvasElement.height;
+            const rightHandY = results.poseLandmarks[16].y * canvasElement.height;
+            const highestHandY = Math.min(leftHandY, rightHandY);
+            const currentHeight = Math.round((groundY - highestHandY) * pixelToCmRatio);
+            
+            if (currentHeight > 100) { // 最低1m以上の動きに反応
+                currentHDisplay.innerText = currentHeight;
+                if (currentHeight > maxReach + 2) { // 2cm以上の更新で反応
+                    maxReach = currentHeight;
+                    maxHDisplay.innerText = maxReach;
+                    speak(maxReach + "センチ"); // 音声読み上げ
+                    
+                    // 最高値を更新したので、一旦録画を止めて保存リンクを生成し、再開
+                    if (mediaRecorder && mediaRecorder.state === "recording") {
+                        mediaRecorder.stop();
+                        setTimeout(() => mediaRecorder.start(), 500);
+                    }
+                }
+            }
+            drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+        }
+        canvasCtx.restore();
+    }
+
+    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    pose.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => { await pose.send({image: videoElement}); },
+        width: 640, height: 480
+    });
+    camera.start();
+</script>
+</body>
+</html>
