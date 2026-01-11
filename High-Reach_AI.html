@@ -2,46 +2,41 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>High-Reach AI Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>High-Reach AI Pro (Rear Cam)</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
     <style>
-        body { margin: 0; background: #121212; color: white; font-family: 'Arial', sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
-        .header { background: rgba(0,0,0,0.9); width: 100%; padding: 10px; text-align: center; border-bottom: 2px solid #00ffcc; }
+        body { margin: 0; background: #121212; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+        .header { background: rgba(0,0,0,0.9); width: 100%; padding: 10px; text-align: center; border-bottom: 2px solid #00ffcc; position: fixed; top: 0; z-index: 100; }
         #status-msg { color: #ffcc00; font-size: 0.9rem; margin-bottom: 5px; }
         .stats { display: flex; justify-content: center; gap: 30px; }
-        .stat-item { text-align: center; }
-        .label { font-size: 0.7rem; color: #aaa; display: block; }
         .value { color: #00ffcc; font-size: 1.8rem; font-weight: bold; }
-        
-        canvas { width: 100vw; height: auto; max-width: 800px; background: #000; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-        .controls { position: fixed; bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-        button { padding: 10px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        #reset-btn { background: #ff4757; color: white; }
-        #calib-btn { background: #57606f; color: white; }
-        #download-link { display: none; background: #2ed573; color: white; text-decoration: none; padding: 10px 20px; border-radius: 20px; font-weight: bold; }
+        canvas { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+        .controls { position: fixed; bottom: 20px; display: flex; gap: 10px; z-index: 100; }
+        button { padding: 12px 20px; border-radius: 25px; border: none; font-weight: bold; background: #444; color: white; }
+        #download-link { display: none; background: #2ed573; color: white; text-decoration: none; padding: 12px 20px; border-radius: 25px; font-weight: bold; }
         video { display: none; }
     </style>
 </head>
 <body>
 
 <div class="header">
-    <div id="status-msg">STEP 1: 床（サイドライン上）をクリック</div>
+    <div id="status-msg">STEP 1: 床をクリック</div>
     <div class="stats">
-        <div class="stat-item"><span class="label">LIVE</span><span id="current-h" class="value">0</span><small>cm</small></div>
-        <div class="stat-item"><span class="label">BEST</span><span id="max-h" class="value">0</span><small>cm</small></div>
+        <div>LIVE: <span id="current-h" class="value">0</span>cm</div>
+        <div>BEST: <span id="max-h" class="value">0</span>cm</div>
     </div>
 </div>
 
 <canvas id="output_canvas"></canvas>
-<video id="input_video"></video>
+<video id="input_video" playsinline></video>
 
 <div class="controls">
-    <button id="calib-btn" onclick="resetCalibration()">設定リセット</button>
-    <button id="reset-btn" onclick="resetMax()">記録リセット</button>
-    <a id="download-link">最高打点の動画を保存</a>
+    <button onclick="resetCalibration()">設定リセット</button>
+    <button onclick="resetMax()" style="background:#ff4757;">記録リセット</button>
+    <a id="download-link">動画保存</a>
 </div>
 
 <script type="module">
@@ -56,98 +51,42 @@
     let groundY = null, netY = null, pixelToCmRatio = 0, maxReach = 0;
     const NET_HEIGHT_CM = 243; 
 
-    // --- 動画保存用変数 ---
-    let mediaRecorder;
-    let recordedChunks = [];
-    const stream = canvasElement.captureStream(30); // キャプチャ開始
-
-    // --- 音声読み上げ関数 ---
     function speak(text) {
         const uttr = new SpeechSynthesisUtterance(text);
         uttr.lang = 'ja-JP';
-        uttr.rate = 1.2;
         window.speechSynthesis.speak(uttr);
     }
 
-    // キャンバス設定
-    canvasElement.width = 640;
-    canvasElement.height = 480;
-
     canvasElement.addEventListener('click', (e) => {
         const rect = canvasElement.getBoundingClientRect();
-        const scaleX = canvasElement.width / rect.width;
-        const scaleY = canvasElement.height / rect.height;
-        const y = (e.clientY - rect.top) * scaleY;
-
-        if (groundY === null) {
-            groundY = y;
-            statusMsg.innerText = "STEP 2: ネットの上端をクリック";
-        } else if (netY === null) {
-            netY = y;
-            pixelToCmRatio = NET_HEIGHT_CM / Math.abs(groundY - netY);
-            statusMsg.innerText = "READY! 録画中...";
-            startRecording(); // 録画開始
-        }
+        const y = (e.clientY - rect.top) * (canvasElement.height / rect.height);
+        if (groundY === null) { groundY = y; statusMsg.innerText = "STEP 2: ネットの上端をクリック"; }
+        else if (netY === null) { netY = y; pixelToCmRatio = NET_HEIGHT_CM / Math.abs(groundY - netY); statusMsg.innerText = "READY!"; }
     });
 
-    window.resetCalibration = () => {
-        groundY = null; netY = null; pixelToCmRatio = 0;
-        statusMsg.innerText = "STEP 1: 床をクリック";
-    };
-
-    window.resetMax = () => {
-        maxReach = 0;
-        maxHDisplay.innerText = "0";
-        downloadLink.style.display = "none";
-    };
-
-    // 録画機能
-    function startRecording() {
-        recordedChunks = [];
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
-        mediaRecorder.onstop = () => {
-            const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            const url = URL.createObjectURL(blob);
-            downloadLink.href = url;
-            downloadLink.download = `best_spike_${maxReach}cm.webm`;
-            downloadLink.style.display = "block";
-        };
-        mediaRecorder.start();
-    }
+    window.resetCalibration = () => { groundY = null; netY = null; pixelToCmRatio = 0; statusMsg.innerText = "STEP 1: 床をクリック"; };
+    window.resetMax = () => { maxReach = 0; maxHDisplay.innerText = "0"; downloadLink.style.display = "none"; };
 
     function onResults(results) {
+        canvasElement.width = results.image.width;
+        canvasElement.height = results.image.height;
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-        if (groundY !== null) {
-            canvasCtx.strokeStyle = "red";
-            canvasCtx.beginPath(); canvasCtx.moveTo(0, groundY); canvasCtx.lineTo(canvasElement.width, groundY); canvasCtx.stroke();
-        }
-        if (netY !== null) {
-            canvasCtx.strokeStyle = "#00ffcc";
-            canvasCtx.beginPath(); canvasCtx.moveTo(0, netY); canvasCtx.lineTo(canvasElement.width, netY); canvasCtx.stroke();
-        }
+        if (groundY !== null) { canvasCtx.strokeStyle = "red"; canvasCtx.strokeRect(0, groundY, canvasElement.width, 1); }
+        if (netY !== null) { canvasCtx.strokeStyle = "#00ffcc"; canvasCtx.strokeRect(0, netY, canvasElement.width, 1); }
 
         if (results.poseLandmarks && pixelToCmRatio > 0) {
-            const leftHandY = results.poseLandmarks[15].y * canvasElement.height;
-            const rightHandY = results.poseLandmarks[16].y * canvasElement.height;
-            const highestHandY = Math.min(leftHandY, rightHandY);
-            const currentHeight = Math.round((groundY - highestHandY) * pixelToCmRatio);
+            const handY = Math.min(results.poseLandmarks[15].y, results.poseLandmarks[16].y) * canvasElement.height;
+            const currentHeight = Math.round((groundY - handY) * pixelToCmRatio);
             
-            if (currentHeight > 100) { // 最低1m以上の動きに反応
+            if (currentHeight > 150) {
                 currentHDisplay.innerText = currentHeight;
-                if (currentHeight > maxReach + 2) { // 2cm以上の更新で反応
+                if (currentHeight > maxReach) {
                     maxReach = currentHeight;
                     maxHDisplay.innerText = maxReach;
-                    speak(maxReach + "センチ"); // 音声読み上げ
-                    
-                    // 最高値を更新したので、一旦録画を止めて保存リンクを生成し、再開
-                    if (mediaRecorder && mediaRecorder.state === "recording") {
-                        mediaRecorder.stop();
-                        setTimeout(() => mediaRecorder.start(), 500);
-                    }
+                    speak(maxReach + "センチ");
                 }
             }
             drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
@@ -159,9 +98,12 @@
     pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     pose.onResults(onResults);
 
+    // 背面カメラ設定
     const camera = new Camera(videoElement, {
         onFrame: async () => { await pose.send({image: videoElement}); },
-        width: 640, height: 480
+        facingMode: 'environment', // これが背面カメラの指定
+        width: 1280,
+        height: 720
     });
     camera.start();
 </script>
